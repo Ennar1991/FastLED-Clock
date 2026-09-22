@@ -1,14 +1,22 @@
 #include <WiFiManager.h>  // https://github.com/tzapu/WiFiManager
 WiFiManager wm;
-#include <TimeLib.h>
+
+#include <Timezone.h>  // https://github.com/JChristensen/Timezone
+#include <TimeLib.h>   // https://github.com/PaulStoffregen/Time
+
+// Central European Time (Frankfurt, Paris)
+TimeChangeRule CEST = { "CEST", Last, Sun, Mar, 2, 120 };  // Central European Summer Time
+TimeChangeRule CET = { "CET ", Last, Sun, Oct, 3, 60 };    // Central European Standard Time
+Timezone CE(CEST, CET);
+TimeChangeRule *tcr;  // pointer to the time change rule, use to get TZ abbrev
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <mDNS.h>
 #include <ArduinoOTA.h>
 
 static const char ntpServerName[] = "1.pool.ntp.org";
-const int timeZone = 2;  // Central European Time
-uint8_t brightness = 127;
+
+uint8_t brightness = 127;  //Global LED brightness
 
 
 
@@ -53,7 +61,7 @@ uint32_t content_clock[4] = {};  //The buffer that determines the displayed cont
 #define COLOR_TIMER CRGB(255, 16, 16)
 #define COLOR_TIMER_DIM CRGB(64, 4, 4)
 
-#define NTP_INTERVAL (3600*12) /*Seconds until re-sync*/
+#define NTP_INTERVAL (3600 * 12) /*Seconds until re-sync*/
 uint8_t btn1_hold = 0;
 uint8_t btn2_hold = 0;
 
@@ -62,40 +70,44 @@ int32_t timerRemainingSeconds = 0;
 bool isTimerRunning = false;
 enum displaymodes { displayClock,
                     displayTimer };
-//displaymodes displayMode = displayClock;
-displaymodes displayMode = displayTimer;
+displaymodes displayMode = displayClock;
 int32_t displayBlankTimer = 0;
 
 
 //Define glyphs
-const uint8_t glyphs_left[13][7] = {
-  { 0, 1, 1, 1, 1, 1, 1 },
-  { 0, 0, 0, 1, 1, 0, 0 },
-  { 1, 0, 1, 1, 0, 1, 1 },
-  { 1, 0, 1, 1, 1, 1, 0 },
-  { 1, 1, 0, 1, 1, 0, 0 },
-  { 1, 1, 1, 0, 1, 1, 0 },
-  { 1, 1, 1, 0, 1, 1, 1 },
-  { 0, 0, 1, 1, 1, 0, 0 },
-  { 1, 1, 1, 1, 1, 1, 1 },
-  { 1, 1, 1, 1, 1, 1, 0 },
-  { 0, 0, 0, 0, 0, 0, 0 },
-  { 0, 0, 0, 0, 0, 0, 0 },
-  { 0, 0, 0, 0, 0, 0, 0 }
+const uint8_t glyphs_left[][7] = {
+//  g  f  a  b  c  d  e          
+  { 0, 1, 1, 1, 1, 1, 1 }, //0
+  { 0, 0, 0, 1, 1, 0, 0 }, //1
+  { 1, 0, 1, 1, 0, 1, 1 }, //2
+  { 1, 0, 1, 1, 1, 1, 0 }, //3
+  { 1, 1, 0, 1, 1, 0, 0 }, //4
+  { 1, 1, 1, 0, 1, 1, 0 }, //5
+  { 1, 1, 1, 0, 1, 1, 1 }, //6
+  { 0, 0, 1, 1, 1, 0, 0 }, //7
+  { 1, 1, 1, 1, 1, 1, 1 }, //8
+  { 1, 1, 1, 1, 1, 1, 0 }, //9
+  { 0, 0, 0, 0, 0, 0, 0 }, //Space
+  { 1, 1, 1, 1, 1, 0, 1 }, //A
+  { 1, 1, 1, 1, 0, 0, 1 }, //P
+  { 1, 1, 0, 0, 0, 1, 1 }  //t
 };
 
-const uint8_t glyphs_right[11][7] = {
-  { 0, 1, 1, 1, 1, 1, 1 },
-  { 0, 1, 0, 0, 0, 0, 1 },
-  { 1, 0, 1, 1, 0, 1, 1 },
-  { 1, 1, 1, 0, 0, 1, 1 },
-  { 1, 1, 0, 0, 1, 0, 1 },
-  { 1, 1, 1, 0, 1, 1, 0 },
-  { 1, 1, 1, 1, 1, 1, 0 },
-  { 0, 1, 0, 0, 0, 1, 1 },
-  { 1, 1, 1, 1, 1, 1, 1 },
-  { 1, 1, 1, 0, 1, 1, 1 },
-  { 0, 0, 0, 0, 0, 0, 0 }
+const uint8_t glyphs_right[][7] = {
+//  g  b  a  f  e  d  c  
+  { 0, 1, 1, 1, 1, 1, 1 }, //0
+  { 0, 1, 0, 0, 0, 0, 1 }, //1
+  { 1, 0, 1, 1, 0, 1, 1 }, //2
+  { 1, 1, 1, 0, 0, 1, 1 }, //3
+  { 1, 1, 0, 0, 1, 0, 1 }, //4
+  { 1, 1, 1, 0, 1, 1, 0 }, //5
+  { 1, 1, 1, 1, 1, 1, 0 }, //6
+  { 0, 1, 0, 0, 0, 1, 1 }, //7
+  { 1, 1, 1, 1, 1, 1, 1 }, //8
+  { 1, 1, 1, 0, 1, 1, 1 }, //9
+  { 0, 0, 0, 0, 0, 0, 0 }, //Space
+  { 1, 1, 1, 1, 1, 0, 1 }, //A
+  
 };
 
 // Define the array of leds_right
@@ -123,6 +135,7 @@ void setup() {
   FastLED.show();
 
   WiFi.mode(WIFI_STA);  // explicitly set mode, esp defaults to STA+AP
+  wm.setSaveConfigCallback(saveConfigCallback);
   wm.setConfigPortalBlocking(false);
   wm.setConfigPortalTimeout(5 * 60);  //5 minutes
                                       //automatically connect using saved credentials if they exist
@@ -145,7 +158,7 @@ void setup() {
     ////Serial.println(Udp.localPort());
     //Serial.println("waiting for sync");
     setSyncProvider(getNtpTime);
-    setSyncInterval(NTP_INTERVAL);  //Sync every 12 hours
+    setSyncInterval(NTP_INTERVAL);
     //Serial.print(String(hour()) + ":" + String(minute()) + ":" + String(second()));
   }
   // Port defaults to 8266
@@ -280,11 +293,17 @@ void loop() {
       btn2_hold = 0;
     }
 
-
-    if (displayMode == displayClock) {
-      uint8_t myHour = hour();
-      uint8_t myMinute = minute();
-      uint8_t mySecond = second();
+    if (wm.getConfigPortalActive()) {
+      content_clock[0] = { 11 };  //A
+      content_clock[1] = { 12 };  //P
+      content_clock[2] = { 10 };  //Space
+      content_clock[3] = { 10 };  //Space
+    } else if (displayMode == displayClock) {
+      time_t utc = now();
+      time_t local = CE.toLocal(utc, &tcr);
+      uint8_t myHour = hour(local);
+      uint8_t myMinute = minute(local);
+      uint8_t mySecond = second(local);
       content_clock[0] = { (myHour > 9 ? myHour / 10 : 10) };  //Use first digit only when hour is >10
       content_clock[1] = { (myHour % 10) };
       content_clock[2] = { (myMinute / 10) };
@@ -326,14 +345,15 @@ void loop() {
     }
 
     //Check WiFi Logic
-
-    if (timeStatus() == timeSet) {
-      WiFi.mode(WIFI_OFF);
-    } else if (timeStatus() == timeNeedsSync) {
-      WiFi.mode(WIFI_STA);  // explicitly set mode, esp defaults to STA+AP
-      (wm.autoConnect("FastLED-Clock-AP"));
-      setSyncProvider(getNtpTime);
-      setSyncInterval(NTP_INTERVAL);
+    if (isOnline) {
+      if (timeStatus() == timeSet) {
+        WiFi.mode(WIFI_OFF);
+      } else if (timeStatus() == timeNeedsSync) {
+        WiFi.mode(WIFI_STA);  // explicitly set mode, esp defaults to STA+AP
+        (wm.autoConnect("FastLED-Clock-AP"));
+        setSyncProvider(getNtpTime);
+        setSyncInterval(NTP_INTERVAL);
+      }
     }
   }
 }
@@ -384,7 +404,7 @@ time_t getNtpTime() {
       secsSince1900 |= (unsigned long)packetBuffer[43];
       isSynced = true;
 
-      return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
+      return secsSince1900 - 2208988800UL;
     }
   }
   //Serial.println("No NTP Response :-(");
@@ -438,4 +458,11 @@ void introAnim() {
     FastLED.show();
     FastLED.delay(1);
   }
+}
+
+//WiFi Manager callback notifying us of the need to save config
+void saveConfigCallback() {
+  isOnline = true;
+  setSyncProvider(getNtpTime);
+  setSyncInterval(NTP_INTERVAL);
 }
